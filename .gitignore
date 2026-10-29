@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# generated results
+output/
+# local copy of the v1.0 files
+backup_v1.0_original/
