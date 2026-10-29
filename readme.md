@@ -37,6 +37,7 @@ v1.2 was tested on Windows 11 by driving all three tabs automatically in offscre
 ### ① Batch generation (批次生成點圖)
 
 - Set the number of images N, dots per image, random seed, pattern type, strength and canvas size.
+- "完成後種子自動 +1" (seed +1 after each run) is on by default: after each batch the seed moves to the next value, so pressing generate again gives new patterns. The seed of each batch is stored in the `batch_seed` column of `all_metrics.csv`; to reproduce a batch, untick the box and enter that seed.
 - Types: `random` (complete spatial randomness, CSR), `cluster`, `regular` (jittered grid), the hybrid types below, and `surprise` (a random type for each image).
 - "混合 (Hybrid)" picks one of the 7 hybrid types for each image; each hybrid type can also be chosen directly from the drop-down list.
 - Output folder `output/batch_<date_time>/`: `pattern_XXXX.png`, `pattern_XXXX_xy.csv` (coordinates), `pattern_XXXX_Lr.png` (L(r) plot), `all_metrics.csv` (all statistics, including the L(r) results below), and `Lr_curves.csv` (every L(r) curve exactly as plotted: one row per pattern and r, with the random band).
@@ -214,6 +215,9 @@ Tests: `python -m pytest -q test_core.py`.
 - 6 new multi-scale hybrid types (table in section 2) and a "random hybrid type" mode. The existing `hybrid` type is unchanged. `surprise` now picks one of the 7 hybrid types 1/4 of the time, so **a surprise batch with the same seed differs from v1.1**.
 - The score itself is unchanged: v1.1 and v1.2 give bit-identical statistics for the same dots.
 - Fix: `hybrid` crashed with very few dots (3–4).
+- Fix: under the Windows 11 style, the up arrow of the number fields actually decreased the value (the two click areas sat side by side while the arrows were drawn stacked), so values could only go down. The ▲▼ buttons are now explicitly stacked and work in every style.
+- Fix: regenerating a batch while table row 1 was already selected left the previous batch's picture and statistics on the right, which looked like "pressing generate again gives the same pattern".
+- The batch seed now moves to the next value after each run by default (see section 2) and is stored in the `batch_seed` column.
 - New dependency: matplotlib (L(r) plots).
 
 ## 7. v1.1 fixes (2026-10-29)

@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image
 
 try:
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal as Signal
+    from PyQt6.QtCore import Qt, QThread, QDir, pyqtSignal as Signal
     from PyQt6.QtGui import QPixmap, QFont
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QTabWidget, QHBoxLayout,
         QVBoxLayout, QGridLayout, QLabel, QPushButton, QSpinBox, QDoubleSpinBox,
@@ -22,7 +22,7 @@ try:
         QHeaderView, QGroupBox, QProgressBar, QSplitter, QMessageBox, QCheckBox,
         QScrollArea, QAbstractItemView, QFrame, QMenu)
 except ImportError:
-    from PySide6.QtCore import Qt, QThread, Signal
+    from PySide6.QtCore import Qt, QThread, QDir, Signal
     from PySide6.QtGui import QPixmap, QFont
     from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QTabWidget, QHBoxLayout,
         QVBoxLayout, QGridLayout, QLabel, QPushButton, QSpinBox, QDoubleSpinBox,
@@ -69,6 +69,7 @@ METRIC_INFO={
     'y_var':'Y 座標變異數（母體定義）',
     'pattern_type':'產生方式（英文代碼；ms_小尺度_大尺度）',
     'pattern_label':'產生方式',
+    'batch_seed':'這一批使用的亂數種子（取消「自動 +1」並輸入此值即可重現）',
     'lr_plot':'L(r) 圖檔名；虛線 L(r)=r 為完全隨機',
     'lr_clustered_r':'L(r) 高於隨機模擬範圍的 r 區間＝在這些尺度顯著群聚（none＝沒有）',
     'lr_regular_r':'L(r) 低於隨機模擬範圍的 r 區間＝在這些尺度顯著均勻（none＝沒有）',
@@ -315,8 +316,14 @@ class BatchTab(BaseTab):
         add_field(grid,'強度 (0–1)',self.strength,1,2)
         add_field(grid,'畫布寬度 (px)',self.width,2,0)
         add_field(grid,'畫布高度 (px)',self.height,2,2)
+        self.auto_seed=QCheckBox('完成後種子自動 +1');self.auto_seed.setChecked(True)
+        self.auto_seed.setToolTip('同一個種子會產生完全相同的點圖。勾選時每次產生完都換下一個種子，'
+                                  '再按一次就得到新的點圖；要重現某一批，取消勾選並輸入該批的種子'
+                                  '（記錄在 all_metrics.csv 的 batch_seed 欄）。')
+        self.seed.setToolTip(self.auto_seed.toolTip())
         add_field(grid,'亂數種子',self.seed,3,0)
-        grid.addWidget(self.random_strength,3,2,1,2)
+        grid.addWidget(self.random_strength,3,2)
+        grid.addWidget(self.auto_seed,3,3)
         self.run=QPushButton('產生 N 張並計算全部指標')
         self.run.clicked.connect(self.generate)
         grid.addWidget(self.run,4,0,1,4)
@@ -367,14 +374,14 @@ class BatchTab(BaseTab):
                 curve,envelope,summary,_=l_analysis(pp,aspect,plot_title(PATTERN_LABELS_EN[typ],stats['score']),lplot)
                 curves.append((name,curve,envelope))
                 stats.update(summary)
-                stats.update(id=f'{i+1:04d}',pattern_type=typ,pattern_label=PATTERN_LABELS[typ],
+                stats.update(id=f'{i+1:04d}',batch_seed=seed,pattern_type=typ,pattern_label=PATTERN_LABELS[typ],
                              strength=variation,image=str(img.name),point_file=f'{name}_xy.csv',
                              lr_plot=lplot.name)
                 rows.append(stats);paths.append(str(img));lpaths.append(str(lplot))
                 progress((i+1)*100/n,f'已產生 {i+1} / {n} 張｜輸出：{root}')
             save_metrics_csv(root/'all_metrics.csv',rows)
             save_l_curves_csv(root/'Lr_curves.csv',curves)
-            return {'rows':rows,'paths':paths,'lpaths':lpaths,'root':str(root)}
+            return {'rows':rows,'paths':paths,'lpaths':lpaths,'root':str(root),'seed':seed}
         self.status.setText('正在產生...')
         self.busy(job,self.done)
     def done(self,result):
@@ -385,9 +392,19 @@ class BatchTab(BaseTab):
                   f"{r['ripley_index']:+.4f}",f"{r['nni']:.3f}",f"{r['x_mean']:.3f}",f"{r['y_mean']:.3f}"]
             for j,v in enumerate(vals):self.table.setItem(i,j,QTableWidgetItem(str(v)))
         self.table.resizeColumnsToContents()
-        if self.rows:self.table.selectRow(0)
-        self.status.setText(f"完成 {len(self.rows)} 張；點圖與 L(r) 圖 PNG、座標 CSV、完整指標已存至：{result['root']}"
-                            '（圖片可按右鍵複製）')
+        if self.rows:
+            self.table.selectRow(0)
+            # If row 1 was already selected, no selection-changed signal fires and the right
+            # side kept showing the previous batch. Refresh it explicitly.
+            self.pick()
+        seed_note=f"種子 {result['seed']}"
+        if self.auto_seed.isChecked():
+            # A fresh seed for the next press, so "generate" again really gives new patterns.
+            nxt=result['seed']+1 if result['seed']<self.seed.maximum() else self.seed.minimum()
+            self.seed.setValue(nxt)
+            seed_note+=f"，下次使用 {nxt}"
+        self.status.setText(f"完成 {len(self.rows)} 張（{seed_note}）；點圖與 L(r) 圖 PNG、座標 CSV、完整指標已存至："
+                            f"{result['root']}（圖片可按右鍵複製）")
     def pick(self):
         idx=self.table.currentRow()
         if idx<0 or idx>=len(self.rows):return
@@ -703,6 +720,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(ImportTab(),'② 匯入圖片／座標分析')
         self.tabs.addTab(OptimizeTab(),'③ 線條圖 → 指定評分')
         self.setCentralWidget(self.tabs)
+        # "icons:" prefix in the stylesheet = the icons folder (works with spaces in the path).
+        QDir.addSearchPath('icons',str(BASE/'icons'))
         self.setStyleSheet('''
             QMainWindow, QWidget {background:#f7fafc; color:#192a36; font-size:12px;}
             QGroupBox {background:#ffffff; border:1px solid #dde6ee; border-radius:10px;
@@ -710,6 +729,26 @@ class MainWindow(QMainWindow):
             QGroupBox::title {subcontrol-origin:margin; left:12px; padding:0 5px;}
             QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {background:#fff; border:1px solid #cbd9e3;
                 border-radius:5px; padding:5px; min-height:20px;}
+            /* Spin box buttons are placed explicitly (up on top, down below). Without this,
+               the Windows 11 style puts the two click areas side by side while the
+               stylesheet draws them stacked, so the visible "up" arrow decreased the value. */
+            QSpinBox, QDoubleSpinBox {padding-right:26px;}
+            QSpinBox::up-button, QDoubleSpinBox::up-button {subcontrol-origin:border;
+                subcontrol-position:top right; width:24px; background:#eef5f8;
+                border-left:1px solid #cbd9e3; border-bottom:1px solid #dde7ed; border-top-right-radius:5px;}
+            QSpinBox::down-button, QDoubleSpinBox::down-button {subcontrol-origin:border;
+                subcontrol-position:bottom right; width:24px; background:#eef5f8;
+                border-left:1px solid #cbd9e3; border-bottom-right-radius:5px;}
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {background:#d7e8ee;}
+            QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+            QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {background:#bfd9e3;}
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {image:url(icons:arrow_up.png); width:10px; height:6px;}
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {image:url(icons:arrow_down.png); width:10px; height:6px;}
+            QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled,
+            QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:off {image:url(icons:arrow_up_off.png);}
+            QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled,
+            QSpinBox::down-arrow:off, QDoubleSpinBox::down-arrow:off {image:url(icons:arrow_down_off.png);}
             QPushButton {background:#146c88; color:#fff; border:none; border-radius:7px;
                 padding:9px 14px; font-weight:600;}
             QPushButton:hover {background:#0b5369;}
