@@ -175,11 +175,11 @@ def apply_picture(label):
 
 class PictureLabel(QLabel):
     """Picture panel. Right-click: copy the full-size picture to the clipboard, or save it."""
-    def __init__(self, caption='預覽', default_name='image.png'):
+    def __init__(self, caption='預覽', default_name='image.png', min_side=240):
         super().__init__(caption)
         self.default_name=default_name
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumSize(240,240)
+        self.setMinimumSize(min_side,min_side)
         self.setToolTip('滑鼠右鍵：複製圖片到剪貼簿／另存圖片')
         self.setStyleSheet('background:#ffffff; border:1px solid #dce3e9; border-radius:9px; color:#81909c;')
     def resizeEvent(self,event):
@@ -524,12 +524,16 @@ class OptimizeTab(BaseTab):
         grid.addWidget(self.go,5,2,1,3)
         grid.addWidget(self.save,5,5,1,2)
         outer.addWidget(group)
+        # One row of five panels (not two rows) so the tab still fits a 1280x720 screen.
         picrow=QHBoxLayout()
-        self.source_preview=PictureLabel('原始線條')
-        self.before_preview=PictureLabel('起始點分布','before_points.png')
-        self.after_preview=PictureLabel('最佳化後點分布','optimized_points.png')
+        self.source_preview=PictureLabel('原始線條',min_side=170)
+        self.before_preview=PictureLabel('起始點分布','before_points.png',170)
+        self.after_preview=PictureLabel('最佳化後點分布','optimized_points.png',170)
+        self.before_lplot=PictureLabel('起始點的 L(r) 圖','before_Lr.png',170)
+        self.after_lplot=PictureLabel('最佳化後的 L(r) 圖','optimized_Lr.png',170)
         for label,title in [(self.source_preview,'原始線條圖'),(self.before_preview,'起始點分布'),
-                            (self.after_preview,'目標點分布')]:
+                            (self.after_preview,'目標點分布'),(self.before_lplot,'起始點 L(r)'),
+                            (self.after_lplot,'目標點 L(r)')]:
             col=QVBoxLayout();col.addWidget(QLabel(title));col.addWidget(label,1)
             picrow.addLayout(col,1)
         outer.addLayout(picrow,2)
@@ -538,7 +542,10 @@ class OptimizeTab(BaseTab):
         self.summary.setWordWrap(True)
         self.summary.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.summary.setStyleSheet('background:#edf4f8; border-radius:7px; padding:14px;')
-        splitter.addWidget(self.summary)
+        # Scrollable, so the long summary never forces the window taller than a 720-px screen.
+        scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self.summary)
+        splitter.addWidget(scroll)
         self.metrics=MetricsPanel()
         splitter.addWidget(self.metrics)
         splitter.setSizes([520,750])
@@ -567,21 +574,29 @@ class OptimizeTab(BaseTab):
             stroke,aspect,meta=image_skeleton(path,threshold,invert)
             progress(35,f'沿線條放置 {npts} 個點...')
             p=evenly_sample_strokes(stroke,npts,aspect=aspect,seed=seed)
-            progress(85,'計算統計量...')
+            progress(80,'計算統計量...')
             stats=analyze(p,aspect)
-            return dict(stroke=stroke,aspect=aspect,meta=meta,points=p,stats=stats,path=path)
+            progress(90,'計算 L(r) 與完全隨機模擬範圍...')
+            curve,envelope,summary,png=l_analysis(p,aspect,plot_title(f'{Path(path).stem}: starting dots',stats['score']))
+            stats.update(summary)
+            return dict(stroke=stroke,aspect=aspect,meta=meta,points=p,stats=stats,path=path,
+                        lr=(curve,envelope,png))
         self.go.setEnabled(False);self.save.setEnabled(False)
         self.busy(job,self.prepared)
     def prepared(self,r):
         p,stats,meta=r['points'],r['stats'],r['meta']
         self.stroke=r['stroke'];self.aspect=r['aspect'];self.original_points=p
         self.current_stats=stats;self.result=None
-        self.source_path=r['path']
+        self.source_path=r['path'];self.lr_before=r['lr'];self.lr_after=None
         set_picture(self.before_preview,point_preview(p,self.aspect))
         set_picture(self.after_preview,point_preview(p,self.aspect))
+        # Until ② runs, the "target" panels show the starting dots, as before.
+        set_picture(self.before_lplot,self.lr_before[2])
+        set_picture(self.after_lplot,self.lr_before[2])
         self.metrics.show_metrics(stats)
         self.summary.setText(f"初始點數：{len(p)}\n起始分數：{stats['score']:+.4f}\n"
             f"Hopkins H：{stats['hopkins_h']:.4f}\nRipley：{stats['ripley_index']:+.4f}\n"
+            f"{l_summary_text(stats)}\n"
             f"線條骨架像素數：{meta['skeleton_pixels']}\n"
             '請按 ② 開始最佳化。分數越接近 0 不代表越像原圖；請檢查輪廓保留率。')
         self.go.setEnabled(True);self.save.setEnabled(False)
@@ -593,6 +608,8 @@ class OptimizeTab(BaseTab):
         target=self.target.value();iters=self.iterations.value();tol=self.tolerance.value()
         maxdist=None if self.no_limit.isChecked() else self.max_off.value()
         seed=self.seed.value();retention=self.retention.value()
+        name=Path(self.source_path).stem
+        start_lr={k:v for k,v in self.current_stats.items() if k.startswith('lr_')}
         def job(progress,cancelled):
             def report(i,n,sc,achieved):
                 progress(100*i/n,f"搜尋 {i}/{n}｜目前最佳 {sc:+.4f}｜"
@@ -603,15 +620,23 @@ class OptimizeTab(BaseTab):
             # Optimizer and analyze() share the default Hopkins probes, so these
             # are the same scores tab ② gives when the exported CSV is re-imported.
             result['initial_stats']=analyze(p,aspect)
+            result['initial_stats'].update(start_lr)
             result['final_stats']=analyze(result['points'],aspect)
+            progress(100,'計算最佳化後的 L(r)...')
+            curve,envelope,summary,png=l_analysis(result['points'],aspect,plot_title(
+                f'{name}: optimized (target {target:+.2f})',result['final_stats']['score']))
+            result['final_stats'].update(summary)
+            result['_lr_after']=(curve,envelope,png)    # kept out of the JSON report
             result['settings']=dict(source=Path(self.source_path).name,n_points=len(p),aspect=aspect,
                                     max_stroke_distance=maxdist,min_stroke_retention=retention,
                                     iterations_requested=iters,search_seed=seed)
             return result
         self.busy(job,self.optimized)
     def optimized(self,result):
+        self.lr_after=result.pop('_lr_after')
         self.result=result;self.save.setEnabled(True)
         set_picture(self.after_preview,point_preview(result['points'],self.aspect))
+        set_picture(self.after_lplot,self.lr_after[2])
         full=result['final_stats']
         self.metrics.show_metrics(full)
         tol=result['tolerance']
@@ -626,7 +651,9 @@ class OptimizeTab(BaseTab):
             f"搜尋結果：{info}\n{hint}\n目標：{result['target']:+.4f} ± {tol:.3f}\n"
             f"起始分數（完整分析）：{result['initial_stats']['score']:+.4f}\n"
             f"最終分數（完整分析）：{full['score']:+.4f}\n"
-            f"與目標差距：{diff:.4f}\n\n"
+            f"與目標差距：{diff:.4f}\n"
+            f"起始 {l_summary_text(result['initial_stats'])}\n"
+            f"最佳化後 {l_summary_text(full)}\n\n"
             f"全部點總位移（幾何單位）：{result['total_movement']:.4f}\n"
             f"平均每點位移：{result['mean_movement']:.4f}\n"
             f"最大單點位移：{result['max_movement']:.4f}\n"
@@ -649,6 +676,10 @@ class OptimizeTab(BaseTab):
         stats_before={'phase':'before',**self.result['initial_stats']}
         stats_after={'phase':'after',**self.result['final_stats']}
         save_metrics_csv(folder/'before_after_metrics.csv',[stats_before,stats_after])
+        (folder/'before_Lr.png').write_bytes(self.lr_before[2])
+        (folder/'optimized_Lr.png').write_bytes(self.lr_after[2])
+        save_l_curves_csv(folder/'Lr_curves.csv',[('before',*self.lr_before[:2]),
+                                                   ('optimized',*self.lr_after[:2])])
         # Use faint underlying strokes in overlay to visually audit shape preservation.
         base=load_image(self.source_path,'RGB').astype(float)
         h,w=base.shape[:2]

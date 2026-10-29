@@ -74,7 +74,7 @@ v1.2 was tested on Windows 11 by driving all three tabs automatically in offscre
 
 #### L(r) results as numbers
 
-The plot is also summarized in numbers (batch `all_metrics.csv`, the statistics table and export of tab ②, and the CLI):
+The plot is also summarized in numbers (batch `all_metrics.csv`, the statistics tables and exports of tabs ② and ③, and the CLI):
 
 | Column | Meaning |
 |---|---|
@@ -117,8 +117,10 @@ A plain JSON coordinate matrix and TXT (one `x y` or `x,y` per line) also work. 
 2. Set the number of dots, e.g. 180, and press ①: the strokes are thinned to a skeleton and dots are placed along it at roughly even spacing.
 3. Set the target score, e.g. `-0.13`, tolerance `0.035`, iterations `3600`.
 4. Set "maximum off-stroke distance" and "minimum stroke retention" (e.g. 0.65). When these shape constraints make the target impossible, the program says "not reached" and suggests which setting to relax. **Measured: with the default maximum off-stroke distance of 0.09, the face only reaches about −0.42 and the fish about −0.96. To reach a near-random score such as −0.13, tick "允許離線移動不限距離" (allow unlimited off-stroke movement)**; `preview_face_optimization.png` was made that way.
-5. Press ② to optimize; compare the original drawing, the starting dots and the adjusted dots; check Hopkins, Ripley, total and mean movement, and shape retention.
-6. Press ③ to export: `before_points.png`, `optimized_points.png`, `optimized_overlay.png`, both coordinate CSVs, before/after statistics, and `optimization_report.json`.
+5. Press ② to optimize; compare the original drawing, the starting dots, the adjusted dots and the L(r) plots of both; check Hopkins, Ripley, total and mean movement, shape retention, and the L(r) conclusion before and after (summary box and the `lr_*` rows of the table).
+6. Press ③ to export: `before_points.png`, `optimized_points.png`, `optimized_overlay.png`, `before_Lr.png`, `optimized_Lr.png`, `Lr_curves.csv` (both L(r) curves), both coordinate CSVs, before/after statistics, and `optimization_report.json`.
+
+> A near-random score does not mean the pattern is random at every scale. For example, the cat reaches −0.138 with unlimited movement, but its L(r) is still above the random band for r ≥ 0.03: the dots stay concentrated around the face outline, and the score mostly looks at small scales (see section 2).
 
 **Important:** the optimizer is a **heuristic constrained search** (random proposals, annealing-style acceptance, and moves back towards the original position). It penalizes distance from the target, movement and off-stroke distance, and enforces the retention constraint, but it does not guarantee the mathematically minimal total movement. Some shapes (for example one long thin closed curve) cannot reach a score near 0 or +1 while keeping their outline; that is a geometric conflict in the request, not a bug.
 
@@ -207,7 +209,8 @@ Tests: `python -m pytest -q test_core.py`.
 
 - Right-click any picture to copy it to the clipboard or save it (all tabs; full-size image). Tab ③ dot previews now use the same size and dot style as the exported PNG.
 - L(r) plots in ① batch and ② import: dashed 45° line for complete randomness, grey band from 39 random simulations, pale yellow band for the radii used by the score. The plot is square with the same range and ticks on both axes; plot text is English and the title has no image number.
-- L(r) results as numbers (`lr_clustered_r`, `lr_regular_r`, …; see section 2) in the statistics table and CSV files, plus a one-line conclusion in the import status bar. L(r) curves are saved as CSV (long format: pattern, r, L, L − r, K, random band).
+- Tab ③ also shows L(r) plots, one for the starting dots and one for the optimized dots, saved with the export. Tab ③ shows its five pictures in one row and the summary box scrolls, so the window fits a 1280 × 720 laptop or projector.
+- L(r) results as numbers (`lr_clustered_r`, `lr_regular_r`, …; see section 2) in the statistics table and CSV files, plus a one-line conclusion in the import status bar and the tab ③ summary. L(r) curves are saved as CSV (long format: pattern, r, L, L − r, K, random band).
 - 6 new multi-scale hybrid types (table in section 2) and a "random hybrid type" mode. The existing `hybrid` type is unchanged. `surprise` now picks one of the 7 hybrid types 1/4 of the time, so **a surprise batch with the same seed differs from v1.1**.
 - The score itself is unchanged: v1.1 and v1.2 give bit-identical statistics for the same dots.
 - Fix: `hybrid` crashed with very few dots (3–4).
